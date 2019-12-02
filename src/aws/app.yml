@@ -1,0 +1,140 @@
+Parameters:
+
+  DockerTag:
+    Type: String
+    Description: Tag used to create/update the container
+
+  DesiredCount:
+    Type: Number
+    Description: Desired number of containers running accross the cluster
+
+  Cluster:
+    Type: String
+    Description: ECS Cluster name
+
+  ECRRepo:
+    Type: String
+    Description: ECS repository name where images will be pulled from
+
+  TargetGroupARN:
+    Type: String
+    Description: ARN for the target group that will be registered
+  
+  FargateSecurityGroup:
+    Type: String
+    Description: Security group to use in containers
+  
+  Subnet1:
+    Type: String
+    Description: Subnet1 to deploy containers in
+  
+  Subnet2:
+    Type: String
+    Description: Subnet1 to deploy containers in
+
+  AppName:
+    Type: String
+    Description: App name
+  
+  ContainerPort:
+    Type: String
+    Description: The container port
+  
+  SSMParam:
+    Type: String
+    Description: Name of the parameter where the arn of sns lives
+
+Resources:
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      LoadBalancers:
+        - ContainerName: !Ref AppName
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroupARN
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref FargateSecurityGroup
+          Subnets:
+            - !Ref Subnet1
+            - !Ref Subnet2
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-TaskDefinition
+      NetworkMode: awsvpc
+      Cpu: 256
+      Memory: 512
+      ExecutionRoleArn: !Ref ExecutionRole
+      TaskRoleArn: !Ref TaskRole
+      RequiresCompatibilities:
+        - FARGATE
+      ContainerDefinitions:
+        - Name: !Ref AppName
+          Image: !Sub ${ECRRepo}:${DockerTag}
+          Memory: 512
+          Cpu: 256
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: SSM_PARAM
+              Value: !Ref SSMParam
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+  
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AppName}"
+      RetentionInDays: 1
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-ECSExecutionRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-ECSTaskRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-SSM-SNS
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - sns:Publish
+                  - ssm:GetParameter

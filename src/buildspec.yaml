@@ -1,0 +1,32 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      docker: 18
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+      - export COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+  build:
+    commands:
+      - echo Building the Docker image...          
+      - docker build -t $REPOSITORY_URI:$COMMIT_HASH .
+  post_build:
+    commands:
+      - echo Pushing Docker image...
+      - docker push $REPOSITORY_URI:$COMMIT_HASH
+      - echo Writing image definitions file...
+      - >
+        printf '{"Parameters": {"DockerTag": "%s", "DesiredCount": "%s",
+        "Cluster": "%s", "ECRRepo": "%s", "TargetGroupARN": "%s", "FargateSecurityGroup": "%s",
+        "Subnet1": "%s", "Subnet2": "%s", "AppName": "%s", "ContainerPort": "%s", "SSMParam": "%s"}}'
+        $COMMIT_HASH $DESIRED_COUNT $CLUSTER $REPOSITORY_URI $TARGET_GROUP_ARN $SECURITY_GROUP
+        $SUBNET1 $SUBNET2 $APP_NAME $APP_PORT $SSM_PARAM_NAME > params.json
+
+artifacts:
+    files:
+      - params.json
+      - aws/app.yml
+
